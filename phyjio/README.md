@@ -24,7 +24,7 @@
 | WatermelonDB 0.27 | Offline-first SQLite ORM |
 | Zustand 5 | Lightweight state management |
 | React Navigation 6 | Screen routing (Stack + Tabs) |
-| XLSX 0.18 | Excel file generation |
+| ExcelJS 4.4 | Excel file generation |
 | react-native-biometrics | Fingerprint/Face ID auth |
 | react-native-share | File sharing |
 | react-native-fs | File system access |

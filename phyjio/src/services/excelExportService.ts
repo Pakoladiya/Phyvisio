@@ -1,9 +1,8 @@
 import RNFS from 'react-native-fs';
 import Share from 'react-native-share';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { Q } from '@nozbe/watermelondb';
-import { formatDate, formatTime, formatDuration } from '../utils/dateUtils';
-import { formatCurrency } from '../utils/formatUtils';
+import { formatDate, formatTime } from '../utils/dateUtils';
 
 export interface ExportOptions {
   type: 'all_patients' | 'single_patient' | 'visits_range';
@@ -34,39 +33,82 @@ export async function exportToExcel(options: ExportOptions): Promise<void> {
 
   const patientMap = new Map(patients.map(p => [p.id, p]));
 
-  // Sheet 1: Patients
-  const patientRows = patients.map(p => ({
-    'Patient Name': p.fullName,
-    Age: p.age,
-    Phone: p.phone,
-    Address: p.address,
-    Ailment: p.ailment,
-    'Referred By': p.referredBy,
-    'Charge/Visit': p.chargePerVisit,
-    'Medical History': p.medicalHistory ?? '',
-    Status: p.isActive ? 'Active' : 'Inactive',
-    'Registered On': formatDate(p.createdAt, 'short'),
-  }));
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'PhyJio';
+  wb.created = new Date();
 
-  // Sheet 2: Visit Log
-  const visitRows = allVisits.map(v => {
-    const p = patientMap.get(v.patientId);
-    return {
-      'Visit Date': formatDate(v.startTime, 'short'),
-      'Start Time': formatTime(v.startTime),
-      'End Time': v.endTime ? formatTime(v.endTime) : '',
-      'Duration (min)': v.durationMin ?? '',
-      'Patient Name': p?.fullName ?? '',
-      Ailment: p?.ailment ?? '',
-      'Session Notes': v.notes ?? '',
-      Charge: v.charge,
-      'Payment Status': v.isPaid ? 'Paid' : 'Unpaid',
-      'Visit Status': v.status,
-    };
+  const COL_WIDTH = 20;
+
+  // ── Sheet 1: Patients ──────────────────────────────────────────────────────
+  const ws1 = wb.addWorksheet('Patients');
+  ws1.columns = [
+    { header: 'Patient Name', key: 'name', width: COL_WIDTH },
+    { header: 'Age', key: 'age', width: COL_WIDTH },
+    { header: 'Phone', key: 'phone', width: COL_WIDTH },
+    { header: 'Address', key: 'address', width: COL_WIDTH },
+    { header: 'Ailment', key: 'ailment', width: COL_WIDTH },
+    { header: 'Referred By', key: 'referredBy', width: COL_WIDTH },
+    { header: 'Charge/Visit', key: 'charge', width: COL_WIDTH },
+    { header: 'Medical History', key: 'medicalHistory', width: COL_WIDTH },
+    { header: 'Status', key: 'status', width: COL_WIDTH },
+    { header: 'Registered On', key: 'registeredOn', width: COL_WIDTH },
+  ];
+  patients.forEach(p => {
+    ws1.addRow({
+      name: p.fullName,
+      age: p.age,
+      phone: p.phone,
+      address: p.address,
+      ailment: p.ailment,
+      referredBy: p.referredBy,
+      charge: p.chargePerVisit,
+      medicalHistory: p.medicalHistory ?? '',
+      status: p.isActive ? 'Active' : 'Inactive',
+      registeredOn: formatDate(p.createdAt, 'short'),
+    });
   });
 
-  // Sheet 3: Summary per patient
-  const summaryRows = patients.map(p => {
+  // ── Sheet 2: Visit Log ─────────────────────────────────────────────────────
+  const ws2 = wb.addWorksheet('Visit Log');
+  ws2.columns = [
+    { header: 'Visit Date', key: 'date', width: COL_WIDTH },
+    { header: 'Start Time', key: 'startTime', width: COL_WIDTH },
+    { header: 'End Time', key: 'endTime', width: COL_WIDTH },
+    { header: 'Duration (min)', key: 'duration', width: COL_WIDTH },
+    { header: 'Patient Name', key: 'patient', width: COL_WIDTH },
+    { header: 'Ailment', key: 'ailment', width: COL_WIDTH },
+    { header: 'Session Notes', key: 'notes', width: COL_WIDTH },
+    { header: 'Charge', key: 'charge', width: COL_WIDTH },
+    { header: 'Payment Status', key: 'paid', width: COL_WIDTH },
+    { header: 'Visit Status', key: 'status', width: COL_WIDTH },
+  ];
+  allVisits.forEach(v => {
+    const p = patientMap.get(v.patientId);
+    ws2.addRow({
+      date: formatDate(v.startTime, 'short'),
+      startTime: formatTime(v.startTime),
+      endTime: v.endTime ? formatTime(v.endTime) : '',
+      duration: v.durationMin ?? '',
+      patient: p?.fullName ?? '',
+      ailment: p?.ailment ?? '',
+      notes: v.notes ?? '',
+      charge: v.charge,
+      paid: v.isPaid ? 'Paid' : 'Unpaid',
+      status: v.status,
+    });
+  });
+
+  // ── Sheet 3: Summary ───────────────────────────────────────────────────────
+  const ws3 = wb.addWorksheet('Summary');
+  ws3.columns = [
+    { header: 'Patient Name', key: 'name', width: COL_WIDTH },
+    { header: 'Total Visits', key: 'visits', width: COL_WIDTH },
+    { header: 'Total Billed ₹', key: 'billed', width: COL_WIDTH },
+    { header: 'Total Paid ₹', key: 'paid', width: COL_WIDTH },
+    { header: 'Balance Due ₹', key: 'balance', width: COL_WIDTH },
+    { header: 'Avg Duration', key: 'avgDuration', width: COL_WIDTH },
+  ];
+  patients.forEach(p => {
     const pVisits = allVisits.filter(v => v.patientId === p.id && v.status === 'completed');
     const totalBilled = pVisits.reduce((s, v) => s + v.charge, 0);
     const totalPaid = pVisits.filter(v => v.isPaid).reduce((s, v) => s + v.charge, 0);
@@ -74,34 +116,19 @@ export async function exportToExcel(options: ExportOptions): Promise<void> {
       pVisits.length > 0
         ? Math.round(pVisits.reduce((s, v) => s + (v.durationMin ?? 0), 0) / pVisits.length)
         : 0;
-    return {
-      'Patient Name': p.fullName,
-      'Total Visits': pVisits.length,
-      'Total Billed ₹': totalBilled,
-      'Total Paid ₹': totalPaid,
-      'Balance Due ₹': totalBilled - totalPaid,
-      'Avg Duration': avgDuration,
-    };
+    ws3.addRow({
+      name: p.fullName,
+      visits: pVisits.length,
+      billed: totalBilled,
+      paid: totalPaid,
+      balance: totalBilled - totalPaid,
+      avgDuration,
+    });
   });
 
-  const wb = XLSX.utils.book_new();
-  const ws1 = XLSX.utils.json_to_sheet(patientRows);
-  const ws2 = XLSX.utils.json_to_sheet(visitRows);
-  const ws3 = XLSX.utils.json_to_sheet(summaryRows);
-
-  // Set column width 20 for all sheets
-  const setColWidth = (ws: XLSX.WorkSheet, count: number) => {
-    ws['!cols'] = Array(count).fill({ wch: 20 });
-  };
-  setColWidth(ws1, 10);
-  setColWidth(ws2, 10);
-  setColWidth(ws3, 6);
-
-  XLSX.utils.book_append_sheet(wb, ws1, 'Patients');
-  XLSX.utils.book_append_sheet(wb, ws2, 'Visit Log');
-  XLSX.utils.book_append_sheet(wb, ws3, 'Summary');
-
-  const base64 = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
+  // Write workbook to buffer and share
+  const buffer = await wb.xlsx.writeBuffer();
+  const base64 = Buffer.from(buffer).toString('base64');
   const filename = `PhyJio_Export_${Date.now()}.xlsx`;
   const path = `${RNFS.DocumentDirectoryPath}/${filename}`;
   await RNFS.writeFile(path, base64, 'base64');
@@ -121,7 +148,10 @@ export async function exportToCSV(patientId?: string): Promise<void> {
   const patients = await patientsCollection.query().fetch();
   const patientMap = new Map(patients.map(p => [p.id, p]));
 
-  const headers = ['Date', 'Start Time', 'End Time', 'Duration (min)', 'Patient', 'Ailment', 'Notes', 'Charge', 'Paid', 'Status'];
+  const headers = [
+    'Date', 'Start Time', 'End Time', 'Duration (min)',
+    'Patient', 'Ailment', 'Notes', 'Charge', 'Paid', 'Status',
+  ];
   const rows = visits.map(v => {
     const p = patientMap.get(v.patientId);
     return [
